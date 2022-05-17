@@ -166,7 +166,7 @@ namespace DataRecovery.Commands
 						}
 						else if (player.Role.Team == Team.CHI)
 						{
-							Respawn.NtfTickets += (uint)Plugin.singleton.Config.RecoveryChaosTickets;
+							Respawn.ChaosTickets += (uint)Plugin.singleton.Config.RecoveryChaosTickets;
 						}
 						bool isMtf = player.Role.Team == Team.MTF;
 						player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(isMtf ? "058df1" : "03811a")}>Data Extracted!</color></b>\n<color=white>You have gained {(isMtf ? Plugin.singleton.Config.RecoveryMtfTickets : Plugin.singleton.Config.RecoveryChaosTickets)} tickets for your team!</color>", 5f);
