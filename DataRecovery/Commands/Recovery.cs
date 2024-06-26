@@ -1,9 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Linq;
 using CommandSystem;
-using Exiled.API.Features;
+using DataRecovery.Patches;
+using MapGeneration;
 using MEC;
+using PlayerRoles;
+using PluginAPI.Core;
 using RemoteAdmin;
+using Respawning;
+using static RoundSummary;
 
 namespace DataRecovery.Commands
 {
@@ -14,7 +21,11 @@ namespace DataRecovery.Commands
 
 		public string Description { get; set; } = "Initiates a data recovery";
 
-		string ICommand.Command { get; } = "recover";
+		public string Command { get; } = "recover";
+
+		bool ICommand.SanitizeResponse => true;
+
+		internal static LeadingTeam OverrideEndConditions = (LeadingTeam)CustomLeadingTeam.None;
 
 		private static Player recoveryPlayer = null;
 		private static CoroutineHandle recoveryCoroutine;
@@ -26,37 +37,39 @@ namespace DataRecovery.Commands
 
 		public bool Execute(ArraySegment<string> arguments, ICommandSender sender, out string response)
 		{
+			RoundEndPatch.LeadingTeamOverride = LeadingTeam.Anomalies;
+
 			if (sender is PlayerCommandSender playerSender)
 			{
 				Player player = Player.Get(playerSender);
 				if (player != null)
 				{
-					if (player.Role.Team == Team.MTF || player.Role.Team == Team.CHI)
+					if (IsMtfTeam(player) || IsChaosTeam(player))
 					{
 						if (!hasExtracted)
 						{
-							if (player.HasItem(ItemType.KeycardChaosInsurgency))
+							if (HasItem(player, ItemType.KeycardChaosInsurgency))
 							{
 								if (recoveryPlayer == null)
 								{
 									if (!completedRecoveries.Contains(player))
 									{
-										if (player.CurrentRoom != null && Plugin.singleton.Config.RecoveryRooms.ContainsKey(player.CurrentRoom.Type))
+										if (player.Room != null && Plugin.Singleton.Config.RecoveryRooms.ContainsKey(player.Room.Name))
 										{
 											recoveryPlayer = player;
 											recoveryCoroutine = Timing.RunCoroutine(RecoveryCoroutine(player));
 											if (canDisplayBroadcast)
 											{
 												canDisplayBroadcast = false;
-												Timing.CallDelayed(Plugin.singleton.Config.RecoveryBroadcastTime, () => canDisplayBroadcast = true);
-												Map.Broadcast((ushort)Plugin.singleton.Config.RecoveryBroadcastTime, Plugin.singleton.Config.RecoveryBroadcast.Replace("{player}", player.Nickname).Replace("{room}", Plugin.singleton.Config.RecoveryRooms[player.CurrentRoom.Type]));
+												Timing.CallDelayed(Plugin.Singleton.Config.RecoveryBroadcastTime, () => canDisplayBroadcast = true);
+												Map.Broadcast((ushort)Plugin.Singleton.Config.RecoveryBroadcastTime, Plugin.Singleton.Config.RecoveryBroadcast.Replace("{player}", player.Nickname).Replace("{room}", Plugin.Singleton.Config.RecoveryRooms[player.Room.Name]).Replace("{teamcolor}", GetTeamColor(player)));
 											}
 											response = "Initiating Data Recovery...";
 											return true;
 										}
 										else
 										{
-											player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(player.Role.Team == Team.MTF ? "058df1" : "03811a")}>Data Recovery Failed!</color></b>\nYou cannot recover data from this room", 3f);
+											player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>Data Recovery Failed!</color></b>\nYou cannot recover data from this room", 3f);
 											response = "You cannot recover data from this room.";
 											return false;
 										}
@@ -75,21 +88,21 @@ namespace DataRecovery.Commands
 								else
 								{
 									KillDataRecovery();
-									player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(player.Role.Team == Team.MTF ? "058df1" : "03811a")}>Data Recovery Failed!</color></b>\nAnother player was recovering data\nYou have <color=red>cancelled</color> their data recovery", 5f);
+									player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>Data Recovery Failed!</color></b>\nAnother player was recovering data\nYou have <color=red>cancelled</color> their data recovery", 5f);
 									response = "Another player was recovering data. You have cancelled their recovery!";
 									return false;
 								}
 							}
 							else
 							{
-								player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(player.Role.Team == Team.MTF ? "058df1" : "03811a")}>Data Recovery Failed!</color></b>\nYou must have a Chaos Insurgency Device", 3f);
+								player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>Data Recovery Failed!</color></b>\nYou must have a Chaos Insurgency Device", 3f);
 								response = "You must have a Chaos Insurgency Device in order to recover data.";
 								return false;
 							}
 						}
 						else
 						{
-							player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(player.Role.Team == Team.MTF ? "058df1" : "03811a")}>No Data Present - Drives Wiped</color></b>", 3f);
+							player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>No Data Present - Drives Wiped</color></b>", 3f);
 							response = "No Data Present - Drives Wiped";
 							return false;
 						}
@@ -115,27 +128,27 @@ namespace DataRecovery.Commands
 
 		private IEnumerator<float> RecoveryCoroutine(Player player)
 		{
-			Room room = player.CurrentRoom;
-			for (float i = Plugin.singleton.Config.RecoveryTime; i >= 0f; i -= 0.5f)
+			RoomIdentifier room = player.Room;
+			for (float i = Plugin.Singleton.Config.RecoveryTime; i >= 0f; i -= 0.5f)
 			{
-				player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(player.Role.Team == Team.MTF ? "058df1" : "03811a")}>Recovering Data...</color></b>\n<color=white>Time Left: </color><color=red>{(int)i} seconds</color>", 1f);
+				player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>Recovering Data...</color></b>\n<color=white>Time Left: </color><color=red>{(int)i} seconds</color>", 1f);
 				yield return Timing.WaitForSeconds(0.5f);
-				if (player.CurrentRoom != room)
+				if (player.Room != room)
 				{
-					player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(player.Role.Team == Team.MTF ? "058df1" : "03811a")}>Data Recovery Failed!</color></b>\nYou have left the room", 3f);
+					player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>Data Recovery Failed!</color></b>\nYou have left the room", 3f);
 					recoveryPlayer = null;
 					yield break;
 				}
-				if (!player.HasItem(ItemType.KeycardChaosInsurgency))
+				if (!HasItem(player, ItemType.KeycardChaosInsurgency))
 				{
-					player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(player.Role.Team == Team.MTF ? "058df1" : "03811a")}>Data Recovery Failed!</color></b>\nYou no longer have a Chaos Insurgency Device", 3f);
+					player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>Data Recovery Failed!</color></b>\nYou no longer have a Chaos Insurgency Device", 3f);
 					recoveryPlayer = null;
 					yield break;
 				}
 				if (!player.IsAlive) yield break;
 			}
 
-			player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(player.Role.Team == Team.MTF ? "058df1" : "03811a")}>Data Recovery Complete!</color></b>\n<color=white>Escape to surface to finish extraction!</color>", 5f);
+			player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>Data Recovery Complete!</color></b>\n<color=white>Escape to surface to finish extraction!</color>", 5f);
 			if (completedRecoveries.Count == 0) completedCoroutine = Timing.RunCoroutine(CompletedCoroutine());
 			completedRecoveries.Add(player);
 			KillDataRecovery();
@@ -152,30 +165,80 @@ namespace DataRecovery.Commands
 
 		private IEnumerator<float> CompletedCoroutine()
 		{
-			while (Round.IsStarted)
+			while (Round.IsRoundStarted)
 			{
 				yield return Timing.WaitForSeconds(5f);
 				foreach (Player player in completedRecoveries)
 				{
-					if (player.CurrentRoom.Zone == Exiled.API.Enums.ZoneType.Surface)
+					if (player.Room.Zone == FacilityZone.Surface)
 					{
 						completedRecoveries.Remove(player);
-						if (player.Role.Team == Team.MTF)
+
+						List<Player> scpList = Player.GetPlayers().Where(x => x.Team == Team.SCPs).ToList();
+						Player scp079 = scpList.FirstOrDefault(x => x.Role == RoleTypeId.Scp079);
+
+						if (scpList.Count == 0) // No SCPs alive
 						{
-							Respawn.NtfTickets += (uint)Plugin.singleton.Config.RecoveryMtfTickets;
+							if (IsMtfTeam(player))
+							{
+								RespawnTokensManager.ForceTeamDominance(SpawnableTeamType.NineTailedFox,
+									RespawnTokensManager.GetTeamDominance(SpawnableTeamType.NineTailedFox) + Plugin.Singleton.Config.GenericRecoveryMtfPercent / 100f);
+							}
+							else if (IsChaosTeam(player))
+							{
+								RespawnTokensManager.ForceTeamDominance(SpawnableTeamType.ChaosInsurgency,
+									RespawnTokensManager.GetTeamDominance(SpawnableTeamType.ChaosInsurgency) + Plugin.Singleton.Config.GenericRecoveryChaosPercent / 100f);
+							}
 						}
-						else if (player.Role.Team == Team.CHI)
+						else if (scp079 != null)
 						{
-							Respawn.ChaosTickets += (uint)Plugin.singleton.Config.RecoveryChaosTickets;
+							if (scpList.Count == 1) // Only SCP-079 alive
+							{
+								if (IsChaosTeam(player))
+								{
+									RoundEndPatch.LeadingTeamOverride = LeadingTeam.Anomalies;
+								}
+								else if (IsMtfTeam(player))
+								{
+									RoundEndPatch.LeadingTeamOverride = LeadingTeam.FacilityForces;
+								}
+								Round.End();
+							}
+							else // More than SCP-079 alive
+							{
+								if (IsChaosTeam(player))
+								{
+									scp079.Kill("Data extracted.", Plugin.Singleton.Config.MultipleScpsExtractionChaosCassieMessage);
+									scp079.SetRole(RoleTypeId.ChaosRepressor, RoleChangeReason.RemoteAdmin);
+									RespawnTokensManager.ForceTeamDominance(SpawnableTeamType.ChaosInsurgency,
+										RespawnTokensManager.GetTeamDominance(SpawnableTeamType.ChaosInsurgency) + Plugin.Singleton.Config.MultipleScpsRecoveryChaosPercent / 100f);
+								}
+								else if (IsMtfTeam(player))
+								{
+									scp079.Kill("Data extracted.", Plugin.Singleton.Config.MultipleScpsExtractionMtfCassieMessage);
+									scp079.SetRole(RoleTypeId.NtfCaptain, RoleChangeReason.RemoteAdmin);
+									RespawnTokensManager.ForceTeamDominance(SpawnableTeamType.NineTailedFox,
+										RespawnTokensManager.GetTeamDominance(SpawnableTeamType.NineTailedFox) + Plugin.Singleton.Config.MultipleScpsRecoveryMtfPercent / 100f);
+								}
+							}
 						}
-						bool isMtf = player.Role.Team == Team.MTF;
-						player.ShowHint($"\n\n\n\n\n\n\n<b><color=#{(isMtf ? "058df1" : "03811a")}>Data Extracted!</color></b>\n<color=white>You have gained {(isMtf ? Plugin.singleton.Config.RecoveryMtfTickets : Plugin.singleton.Config.RecoveryChaosTickets)} tickets for your team!</color>", 5f);
+
+						player.ReceiveHint($"\n\n\n\n\n\n\n<b><color={GetTeamColor(player)}>Data Extracted!</color></b>\n<color=white>You have gained a {(IsMtfTeam(player) ? Plugin.Singleton.Config.GenericRecoveryMtfPercent : Plugin.Singleton.Config.GenericRecoveryChaosPercent)}% spawn boost for your team!</color>", 5f);
 						hasExtracted = true;
-						Map.Broadcast((ushort)Plugin.singleton.Config.ExtractionBroadcastTime, Plugin.singleton.Config.ExtractionBroadcast.Replace("{player}", player.Nickname));
+						Map.Broadcast((ushort)Plugin.Singleton.Config.ExtractionBroadcastTime, Plugin.Singleton.Config.ExtractionBroadcast.Replace("{player}", player.Nickname).Replace("{teamcolor}", GetTeamColor(player)));
 						yield break;
 					}
 				}
 			}
+		}
+
+		private static bool HasItem(Player player, ItemType itemType)
+		{
+			foreach (var item in player.ReferenceHub.inventory.UserInventory.Items)
+			{
+				if (item.Value.ItemTypeId == itemType) return true;
+			}
+			return false;
 		}
 
 		internal static void ResetData()
@@ -191,6 +254,40 @@ namespace DataRecovery.Commands
 		internal static void RemoveCompletedPlayer(Player player)
 		{
 			if (completedRecoveries.Contains(player)) completedRecoveries.Remove(player);
+		}
+
+		private static bool IsMtfTeam(Player player) => player.Team == Team.FoundationForces || player.Team == Team.Scientists;
+		private static bool IsChaosTeam(Player player) => player.Team == Team.ChaosInsurgency || player.Team == Team.ClassD;
+
+		private static string GetTeamColor(Player player)
+		{
+			switch (player.Role)
+			{
+				case RoleTypeId.ChaosConscript:
+					return "#03811a";
+				case RoleTypeId.ChaosMarauder:
+					return "#045d22";
+				case RoleTypeId.ChaosRepressor:
+					return "#0c7732";
+				case RoleTypeId.ChaosRifleman:
+					return "#07771a";
+				case RoleTypeId.ClassD:
+					return "#ffae00";
+				case RoleTypeId.FacilityGuard:
+					return "#bfbfbf";
+				case RoleTypeId.NtfPrivate:
+					return "#6ab9f1";
+				case RoleTypeId.NtfCaptain:
+					return "#003dcb";
+				case RoleTypeId.NtfSergeant:
+					return "#058df1";
+				case RoleTypeId.NtfSpecialist:
+					return "#0390f5";
+				case RoleTypeId.Scientist:
+					return "#ffff7c";
+				default:
+					return "#ffffff";
+			}
 		}
 	}
 }

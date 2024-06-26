@@ -1,33 +1,35 @@
-﻿using Exiled.API.Features;
+﻿using HarmonyLib;
+using PluginAPI.Core;
+using PluginAPI.Core.Attributes;
+using PluginAPI.Events;
 
 namespace DataRecovery
 {
-    public class Plugin : Plugin<Config>
+    public class Plugin
     {
-		internal static Plugin singleton;
+		internal static Plugin Singleton { get; private set; }
+		private Harmony Harmony { get; set; }
 
-		private EventHandlers ev;
-
-		public override void OnEnabled()
+		[PluginEntryPoint("Data Recovery", "1.1.0", "Implements a custom data recovery minigame.", "Cyanox")]
+		void LoadPlugin()
 		{
-			base.OnEnabled();
+			Singleton = this;
 
-			singleton = this;
+			Harmony = new Harmony(PluginHandler.Get(this).PluginName);
+			Harmony.PatchAll();
 
-			ev = new EventHandlers();
-			Exiled.Events.Handlers.Server.WaitingForPlayers += ev.OnWaitingForPlayers;
-			Exiled.Events.Handlers.Player.Dying += ev.OnPlayerDie;
+			EventManager.RegisterAllEvents(this);
 		}
 
-		public override void OnDisabled()
+		[PluginUnload]
+		void UnloadPlugin()
 		{
-			base.OnDisabled();
+			EventManager.UnregisterAllEvents(this);
 
-			Exiled.Events.Handlers.Server.WaitingForPlayers -= ev.OnWaitingForPlayers;
-			Exiled.Events.Handlers.Player.Dying -= ev.OnPlayerDie;
-			ev = null;
+			Harmony.UnpatchAll();
 		}
 
-		public override string Author => "Cyanox";
+		[PluginConfig]
+		public Config Config;
 	}
 }
